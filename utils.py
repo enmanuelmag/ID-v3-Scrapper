@@ -67,7 +67,7 @@ class SearcherDriver:
     def load_url_scraped(self):
         if not os.path.exists(self.file):
             print(f"[DRIVER] File not found: {self.file}")
-            return []
+            return ['link	description	username	date	links	comments	shares	comments_text']
         
         with open(self.file, 'r') as f:
             lines = f.readlines()
