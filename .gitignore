@@ -1,2 +1,4 @@
-/__pycache__
-/tiktok_violencia_guayaquil.csv
+__pycache__
+
+*.pkl
+*.csv
