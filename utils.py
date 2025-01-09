@@ -58,7 +58,6 @@ class SearcherDriver:
             self.url_scraped.append(data.split(',')[0])
 
     def is_url_scraped(self) -> bool:
-        print(f"[DRIVER] {self.driver.current_url} in {self.url_scraped}")
         result = self.driver.current_url in self.url_scraped
         if result:
             print(f"[DRIVER] URL already scraped: {self.driver.current_url}")
