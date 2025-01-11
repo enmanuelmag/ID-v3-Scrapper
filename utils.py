@@ -61,7 +61,10 @@ class SearcherDriver:
             self.url_scraped.append(clean_url(data.split(',')[0]))
 
     def is_url_scraped(self) -> bool:
+        print("[DRIVER] Checking if URL is already scraped")
         result = clean_url(self.driver.current_url) in self.url_scraped
+
+        print(f"[DRIVER] Current URL: {self.driver.current_url} - Scraped: {result}")
         if result:
             print(f"[DRIVER] URL already scraped: {self.driver.current_url}")
 
@@ -70,12 +73,17 @@ class SearcherDriver:
     def load_url_scraped(self):
         if not os.path.exists(self.file):
             print(f"[DRIVER] File not found: {self.file}")
-            return ['link	description	username	date	links	comments	shares	comments_text']
-        
+            with open(self.file, 'w') as f:
+                f.write('link	description	username	date	links	comments	shares	comments_text\n')
+            return []
+
         with open(self.file, 'r') as f:
             lines = f.readlines()
-            print(f"[DRIVER] Loaded {len(lines)} scraped URLs")
-            return [line.split(',')[0] for line in lines]
+
+            urls = [line.split('\t')[0] for line in lines]
+            print(f"[DRIVER] Scraped URLs: {urls}")
+
+            return urls
 
     def get(self, url: str):
         self.driver.get(url)
