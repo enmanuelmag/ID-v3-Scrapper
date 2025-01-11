@@ -9,6 +9,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.remote.webdriver import WebElement
 from selenium.webdriver.support import expected_conditions as EC
 
+def clean_url(url: str) -> str:
+    return url.split('?')[0]
+
 def build_url_search(url_base, keywords = []):
   url = f'{url_base}?q='
 
@@ -55,10 +58,10 @@ class SearcherDriver:
     def append_data(self, data: str):
         with open(self.file, 'a') as f:
             f.write(data + '\n')
-            self.url_scraped.append(data.split(',')[0])
+            self.url_scraped.append(clean_url(data.split(',')[0]))
 
     def is_url_scraped(self) -> bool:
-        result = self.driver.current_url in self.url_scraped
+        result = clean_url(self.driver.current_url) in self.url_scraped
         if result:
             print(f"[DRIVER] URL already scraped: {self.driver.current_url}")
 
@@ -88,7 +91,7 @@ class SearcherDriver:
         print(f"[DRIVER] Sleeping for {seconds} seconds")
         time.sleep(seconds)
 
-    def get_element_by(self, selector_type: Literal['id', 'css', 'xpath'], selector: str, timeout = 40, none_is_ok = False, from_capcha=False) -> WebElement | None:
+    def get_element_by(self, selector_type: Literal['id', 'css', 'xpath'], selector: str, timeout = 40, from_capcha=False) -> WebElement | None:
         by_selector = self.by_type.get(selector_type)
 
         if by_selector is None:
@@ -109,13 +112,14 @@ class SearcherDriver:
 
         if element is None and not from_capcha:
             print(f"[WARMING] Element not found: {selector}")
-            if not none_is_ok:
-                raise Exception(f"Element not found: {selector}")
+            return None
+            # if not none_is_ok:
+            #     raise Exception(f"Element not found: {selector}")
 
         return element
 
 
-    def get_elements_by(self, selector_type: Literal['id', 'css', 'xpath'], selector: str, timeout = 40, none_is_ok = False, from_capcha=False) -> List[WebElement]:
+    def get_elements_by(self, selector_type: Literal['id', 'css', 'xpath'], selector: str, timeout = 40, from_capcha=False) -> List[WebElement]:
         by_selector = self.by_type.get(selector_type)
 
         if by_selector is None:
@@ -136,10 +140,10 @@ class SearcherDriver:
 
         if elements is None and not from_capcha:
             print(f"[WARMING] Elements not found: {selector}")
-            if not none_is_ok:
-                raise Exception(f"Elements not found: {selector}")
-            else:
-                return []
+            # if not none_is_ok:
+            #     raise Exception(f"Elements not found: {selector}")
+            # else:
+            return []
 
         return elements
     
