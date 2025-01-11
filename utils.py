@@ -65,8 +65,6 @@ class SearcherDriver:
         result = clean_url(self.driver.current_url) in self.url_scraped
 
         print(f"[DRIVER] Scraped: {result} - Current URL: {self.driver.current_url}")
-        if result:
-            print(f"[DRIVER] URL already scraped: {self.driver.current_url}")
 
         return result
 
