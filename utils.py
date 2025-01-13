@@ -39,6 +39,9 @@ def parse_text_number(text: str) -> int:
 
 
 def clean_text(text: str) -> str:
+    if text is None:
+        return ''
+
     return text.strip().replace('\n', '').replace('\t', '')
 
 class SearcherDriver:
@@ -64,7 +67,7 @@ class SearcherDriver:
         print("[DRIVER] Checking if URL is already scraped")
         result = clean_url(self.driver.current_url) in self.url_scraped
 
-        print(f"[DRIVER] Scraped: {result} - Current URL: {self.driver.current_url}")
+        print(f"[DRIVER] Scraped: {result} - URL: {clean_url(self.driver.current_url)}")
 
         return result
 
