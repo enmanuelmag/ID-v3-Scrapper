@@ -45,22 +45,25 @@ def clean_text(text: str) -> str:
     return text.strip().replace('\n', '').replace('\t', '')
 
 class SearcherDriver:
-    def __init__(self, file, executable_path = None, check_captcha_fn = None):
-        assert file is not None, "No file provided"
-
+    def __init__(self, executable_path = None, check_captcha_fn = None):
         if executable_path is None:
             print('[WARNING] No executable path provided. Searching for chromedriver in PATH')
 
-        self.file = file
+        #self.file = file
         self.check_captcha_fn = check_captcha_fn
         self.by_type = {"id": By.ID, "css": By.CSS_SELECTOR, "xpath": By.XPATH}
         self.driver = webdriver.Chrome(service=webdriver.ChromeService(executable_path=executable_path))
 
+        #self.url_scraped = self.load_url_scraped()
+
+    def set_file(self, file: str, city: str):
+        self.file = file
+        self.city = city
         self.url_scraped = self.load_url_scraped()
 
     def append_data(self, data: str):
         with open(self.file, 'a') as f:
-            f.write(data + '\n')
+            f.write(f'{data}\t{self.city}\n')
             self.url_scraped.append(clean_url(data.split(',')[0]))
 
     def is_url_scraped(self) -> bool:
@@ -70,18 +73,18 @@ class SearcherDriver:
 
         return result
 
-    def load_url_scraped(self):
+    def load_url_scraped(self: str):
         if not os.path.exists(self.file):
-            print(f"[DRIVER] File not found: {self.file}")
+            print(f"[DRIVER] File not found: {self.file} - Creating new file")
             with open(self.file, 'w') as f:
-                f.write('link	description	username	date	links	comments	shares	comments_text\n')
+                f.write('link	description	username	date	links	comments	shares	comments_text	city\n')
             return []
 
         with open(self.file, 'r') as f:
             lines = f.readlines()
 
             urls = [line.split('\t')[0] for line in lines]
-            print(f"[DRIVER] Scraped URLs: {urls}")
+            print(f"[DRIVER] Scraped URLs: {len(urls)}")
 
             return urls
 
