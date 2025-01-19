@@ -5,3 +5,7 @@ __pycache__
 *.error
 
 .DS_Store
+
+mlruns/
+model/results/
+tweets_parsed_dataset/
