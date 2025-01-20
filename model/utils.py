@@ -1,6 +1,7 @@
 import os
 import torch
 import logging
+import warnings
 import pandas as pd
 import torch.nn as nn
 import torch.optim as optim
@@ -17,29 +18,30 @@ from transformers import (
 )
 
 logging.basicConfig()
+warnings.filterwarnings("ignore")
 logger = logging.getLogger("Utils")
 logger.setLevel(logging.INFO)
 
 random_state = 42
 set_seed(random_state)
 
-# "tweet_date_created","tweet_id","tweet_text","language","sentiment","sentiment_score"
-
-
 id2label = {0: "NEG", 1: "NEU", 2: "POS"}
 label2id = {v: k for k, v in id2label.items()}
 
-# get_preprocessing_args
 preprocessing_args = {
     "user_token": "@usuario",
     "url_token": "url",
     "hashtag_token": "hashtag",
 }
 
-BASE_MODEL = "pysentimiento/robertuito-base-uncased"  # base_model / model_name
+BASE_MODEL = "pysentimiento/robertuito-base-uncased"
 
 
-# Custom Transformer model
+"""
+MODELS UTILS
+"""
+
+
 class TransformerPlusBLSTM(nn.Module):
     def __init__(
         self,
@@ -117,12 +119,11 @@ def config_device(model):
 
 def load_model(
     base_model,
-    blstm=False,
-    lstm_num_layers=2,
-    lstm_hidden_dim=128,
+    train_arg,
     max_length=128,
     auto_class=AutoModelForSequenceClassification,
     problem_type=None,
+    skip_device=False,
 ):
     """
     Loads model and tokenizer
@@ -141,12 +142,8 @@ def load_model(
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     tokenizer.model_max_length = max_length
 
-    # if type(id2label) is not dict:
-    #     id2label = {str(i): label for i, label in enumerate(id2label)}
-
     label2id = {label: i for i, label in id2label.items()}
 
-    # Add special tokens
     special_tokens = list(preprocessing_args.values())
 
     tokenizer.add_tokens(special_tokens)
@@ -155,15 +152,18 @@ def load_model(
     model.config.id2label = id2label
     model.config.label2id = label2id
 
-    if blstm:
+    if train_arg.get("blstm", False):
         model = TransformerPlusBLSTM(
             model,
-            hidden_dim=lstm_hidden_dim,
-            num_layers=lstm_num_layers,
+            hidden_dim=train_arg.get("lstm_hidden_dim", 128),
+            num_layers=train_arg.get("lstm_num_layers", 2),
             loss_fn=nn.CrossEntropyLoss(),
         )
 
-    return config_device(model), tokenizer
+    if not skip_device:
+        model = config_device(model)
+
+    return model, tokenizer
 
 
 def load_dataset(
@@ -264,6 +264,11 @@ def load_dataset(
     dataset_dict.save_to_disk(dataset_path.replace(".csv", "_dataset"))
 
     return dataset_dict
+
+
+"""
+UTILS
+"""
 
 
 def get_training_arguments(

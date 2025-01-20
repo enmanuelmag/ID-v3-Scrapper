@@ -2,9 +2,9 @@ import warnings
 import logging
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
+warnings.filterwarnings("ignore")
 
 logging.basicConfig()
-# Solo mostrar warnings o más altos
 
 import mlflow
 import torch
@@ -101,6 +101,8 @@ def manual_train(model, train_args, train_arg, dataset):
 
     num_training_steps = num_epochs * len(train_dataloader)
 
+    current_step = 0
+
     lr_scheduler = get_scheduler(
         name="linear",
         optimizer=optimizer,
@@ -110,94 +112,111 @@ def manual_train(model, train_args, train_arg, dataset):
 
     best_macro_f1 = float("-inf")
 
-    with mlflow.start_run(run_name="RobertuitoBiLSTM"):
-        run_id = mlflow.active_run().info.run_id
+    try:
+        with mlflow.start_run(run_name="RobertuitoBiLSTM"):
+            run_id = mlflow.active_run().info.run_id
 
-        logger.info(f"Run ID {run_id}")
+            mlflow.log_params(train_arg)
 
-        progress_bar = tqdm(range(num_training_steps))
+            logger.info(f"Run ID {run_id}")
 
-        for epoch_idx in range(num_epochs):
+            progress_bar = tqdm(range(num_training_steps))
 
-            model.train()
-            for i, batch in enumerate(train_dataloader):
-                batch["input_ids"] = torch.tensor(batch["input_ids"]).to(device)
-                batch["attention_mask"] = torch.tensor(batch["attention_mask"]).to(
-                    device
-                )
-                batch["token_type_ids"] = torch.tensor(batch["token_type_ids"]).to(
-                    device
-                )
-                batch["label"] = torch.tensor(batch["label"]).to(device)
+            for epoch_idx in range(num_epochs):
 
-                _, loss = model(**batch)
+                model.train()
+                for i, batch in enumerate(train_dataloader):
+                    batch["input_ids"] = torch.tensor(batch["input_ids"]).to(device)
+                    batch["attention_mask"] = torch.tensor(batch["attention_mask"]).to(
+                        device
+                    )
+                    batch["token_type_ids"] = torch.tensor(batch["token_type_ids"]).to(
+                        device
+                    )
+                    batch["label"] = torch.tensor(batch["label"]).to(device)
 
-                mlflow.log_metric("train_loss", loss.item())
+                    logits_train, loss = model(**batch)
 
-                loss.backward()
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
-                progress_bar.update(1)
-
-                if i >= 0 and i % 500 == 0:
-                    text = f"Epoch {epoch_idx + 1}\nLoss: {loss.item():.6f}"
-                    notifier(msg=f"{text}")
-
-            model.eval()
-
-            ret_mean = {}
-
-            for batch in test_dataloader:
-                batch["input_ids"] = torch.tensor(batch["input_ids"]).to(device)
-                batch["attention_mask"] = torch.tensor(batch["attention_mask"]).to(
-                    device
-                )
-                batch["token_type_ids"] = torch.tensor(batch["token_type_ids"]).to(
-                    device
-                )
-                batch["label"] = torch.tensor(batch["label"]).to(device)
-
-                with torch.no_grad():
-                    logits, _ = model(**batch)
+                    loss.backward()
+                    optimizer.step()
+                    lr_scheduler.step()
+                    optimizer.zero_grad()
+                    progress_bar.update(1)
+                    current_step += 1
 
                     ret = get_metrics(
-                        logits.detach().cpu().numpy(),
+                        logits_train.detach().cpu().numpy(),
                         batch["label"].detach().cpu().numpy(),
                     )
 
                     for k, v in ret.items():
-                        if k not in ret_mean:
-                            ret_mean[k] = 0
-                        ret_mean[k] += v
+                        mlflow.log_metric(f"train_{k}", v, step=current_step)
 
-            for k in ret_mean:
-                ret_mean[k] /= len(test_dataloader)
+                    mlflow.log_metric("train_loss", loss.item(), step=current_step)
 
-            current_macro_f1 = ret_mean["macro_f1"]
+                    # if i >= 0 and i % 1000 == 0:
+                    #     text = f"Epoch {epoch_idx + 1}\nLoss: {loss.item():.6f}"
+                    #     notifier(msg=f"{text}")
 
-            if current_macro_f1 > best_macro_f1:
-                best_macro_f1 = current_macro_f1
+                model.eval()
 
-                mlflow.pytorch.log_model(model, "model")
+                ret_mean = {}
 
-            text = f"Epoch {_ + 1}\n"
+                for batch in test_dataloader:
+                    batch["input_ids"] = torch.tensor(batch["input_ids"]).to(device)
+                    batch["attention_mask"] = torch.tensor(batch["attention_mask"]).to(
+                        device
+                    )
+                    batch["token_type_ids"] = torch.tensor(batch["token_type_ids"]).to(
+                        device
+                    )
+                    batch["label"] = torch.tensor(batch["label"]).to(device)
 
-            for k, v in ret_mean.items():
-                mlflow.log_metric(f"eval_{k}", v)
-                text += f"{k}: {v:.6f}\n"
+                    with torch.no_grad():
+                        logits, _ = model(**batch)
 
-            text += f"Best macro F1: {best_macro_f1:.10f}"
+                        ret = get_metrics(
+                            logits.detach().cpu().numpy(),
+                            batch["label"].detach().cpu().numpy(),
+                        )
 
-            notifier(msg=f"{text}")
+                        for k, v in ret.items():
+                            if k not in ret_mean:
+                                ret_mean[k] = 0
+                            ret_mean[k] += v
 
-        logger.info(f"Best macro F1: {best_macro_f1}")
-        logger.info(f"Run ID {run_id}")
+                for k in ret_mean:
+                    ret_mean[k] /= len(test_dataloader)
+
+                current_macro_f1 = ret_mean["macro_f1"]
+
+                if current_macro_f1 > best_macro_f1:
+                    best_macro_f1 = current_macro_f1
+
+                    mlflow.pytorch.log_model(model, "model")
+
+                text = f"Epoch {epoch_idx + 1}\n"
+
+                for k, v in ret_mean.items():
+                    mlflow.log_metric(f"eval_{k}", v, step=current_step)
+                    text += f"{k}: {v:.6f}\n"
+
+                text += f"Best macro F1: {best_macro_f1:.10f}"
+
+                notifier(msg=f"{text}")
+
+            logger.info(f"Best macro F1: {best_macro_f1}")
+            logger.info(f"Run ID {run_id}")
+
+    except Exception as e:
+        notifier(
+            msg=f"Error: {e}",
+        )
 
 
 def train_model(
     base_model: str = "pysentimiento/robertuito-base-uncased",
-    dataset_path: str = "e:\\Media\\Python\\ID-v3-Scrapper\\model\\tweets_parsed.csv",
+    dataset_path: str = "e:\\Media\\Python\\ID-v3-Scrapper\\model\\data\\parsed\\tweets_parsed.csv",
     limit: int = None,
 ):
     gc.collect()
@@ -207,12 +226,7 @@ def train_model(
 
     dataset = load_dataset(dataset_path, limit=limit)
 
-    model, tokenizer = load_model(
-        base_model,
-        blstm=train_arg.get("blstm", False),
-        lstm_hidden_dim=train_arg.get("lstm_hidden_dim", 128),
-        lstm_num_layers=train_arg.get("lstm_num_layers", 2),
-    )
+    model, tokenizer = load_model(base_model, train_arg)
 
     dataset = dataset.map(
         lambda x: tokenizer(
