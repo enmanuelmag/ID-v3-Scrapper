@@ -2,11 +2,14 @@ import torch
 import logging
 import transformers
 
-from pysentimiento import preprocess_tweet
+from pysentimiento.preprocessing import preprocess_tweet
 from datasets import Dataset
 from torch.nn import functional as F
 
-from .utils import load_model, preprocessing_args, id2label, label2id
+try:
+    from .utils import load_model, preprocessing_args, id2label
+except ImportError:
+    from utils import load_model, preprocessing_args, id2label
 
 logger = logging.getLogger("Analyzer")
 
@@ -17,8 +20,10 @@ transformers.logging.set_verbosity_error()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+BASE_MODEL = "pysentimiento/robertuito-base-uncased"
 
-class AnalyzerOutput:
+
+class AnalyzerBiLSTMOutput:
     """
     Base class for classification output
     """
@@ -34,7 +39,7 @@ class AnalyzerOutput:
         if not is_multilabel:
             self.output = max(probas.items(), key=lambda x: x[1])[0]
         else:
-            self.output = [k for k, v in probas.items() if v > 0.5]
+            self.output = [k for k, v in probas.items() if v > 0.35]
 
     def __repr__(self):
         ret = f"{self.__class__.__name__}"
@@ -49,7 +54,7 @@ class AnalyzerOutput:
         return ret
 
 
-class TokenClassificationOutput:
+class TokenBiLSTMClassificationOutput:
     """
     Output for token classification
     """
@@ -78,7 +83,7 @@ class TokenClassificationOutput:
         return ret
 
 
-class BaseAnalyzer:
+class BaseBiLSTMAnalyzer:
     def __init__(
         self, model, tokenizer, preprocessing_args=preprocessing_args, batch_size=32
     ):
@@ -120,28 +125,20 @@ class BaseAnalyzer:
         )
 
 
-class AnalyzerForSequenceClassification(BaseAnalyzer):
+class AnalyzerForSequenceClassification(BaseBiLSTMAnalyzer):
     """
     Wrapper to use sentiment analysis models as black-box
     """
 
     @classmethod
     def from_model_name(
-        cls, model_name, task, preprocessing_args={}, batch_size=32, **kwargs
+        cls, lbstm, task, preprocessing_args={}, batch_size=32, **kwargs
     ):
-        """
-        Constructor for SentimentAnalyzer class
-
-        Arguments:
-
-        model_name: str or path
-            Model name or
-        """
         train_arg = {
-            "blstm": True,
+            "blstm": lbstm,
         }
-        model, tokenizer = load_model(model_name, train_arg)
-        return cls(model, tokenizer, task, preprocessing_args, batch_size, **kwargs)
+        model, tokenizer = load_model(BASE_MODEL, train_arg)
+        return cls(model, tokenizer, preprocessing_args, batch_size)
 
     def _get_output(self, sentence, logits, context=None):
         """
@@ -157,7 +154,7 @@ class AnalyzerForSequenceClassification(BaseAnalyzer):
             probs = torch.softmax(logits, dim=1).view(-1)
 
         probas = {self.id2label[i]: probs[i].item() for i in self.id2label}
-        return AnalyzerOutput(
+        return AnalyzerBiLSTMOutput(
             sentence, probas=probas, is_multilabel=is_multilabel, context=context
         )
 
@@ -242,7 +239,7 @@ class AnalyzerForSequenceClassification(BaseAnalyzer):
         dataset = dataset.map(self._tokenize, batched=True, batch_size=self.batch_size)
 
         # output = self.eval_trainer.predict(dataset)
-        output = self.model(**dataset)
+        output = self.model.predict(**dataset)
         logits = torch.tensor(output.predictions)
 
         if context is None:
@@ -260,7 +257,7 @@ class AnalyzerForSequenceClassification(BaseAnalyzer):
 def create_analyzer_blstm(
     task=None,
     lang=None,
-    model_name=None,
+    lbstm=None,
     preprocessing_args=preprocessing_args,
     **kwargs,
 ):
@@ -273,8 +270,6 @@ def create_analyzer_blstm(
         Task name ("sentiment", "emotion", "hate_speech", "irony", "ner", "pos")
     lang: str
         Language code (accepts "en", "es", "it", "pt". See documentation for further information)
-    model_name: str
-        Model name or path
     preprocessing_args: dict
         Preprocessing arguments for `preprocess_tweet` function
 
@@ -282,14 +277,12 @@ def create_analyzer_blstm(
     --------
         Analyzer object for the given task and language
     """
-    if not (model_name or (lang and task)):
-        raise ValueError("model_name or (lang and task) must be provided")
 
     preprocessing_args = preprocessing_args or {}
 
     return AnalyzerForSequenceClassification.from_model_name(
-        model_name=model_name,
         task=task,
+        lbstm=lbstm,
         preprocessing_args=preprocessing_args,
         lang=lang,
         **kwargs,

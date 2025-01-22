@@ -1,16 +1,18 @@
 import warnings
 import logging
 
+logging.getLogger("mlflow.models.model").setLevel(logging.ERROR)
+logging.basicConfig()
+
 warnings.simplefilter(action="ignore", category=FutureWarning)
 warnings.filterwarnings("ignore")
-
-logging.basicConfig()
 
 import mlflow
 import torch
 import fire
 import time
 import gc
+import numpy as np
 
 from tqdm.auto import tqdm
 from notifier import Notifier
@@ -47,9 +49,9 @@ train_arg = {
     "warmup_ratio": 0.1,
     "learning_rate": 5e-5,
     "weight_decay": 0.01,
-    "blstm": True,
-    "lstm_hidden_dim": 128,
-    "lstm_num_layers": 2,
+    # "blstm": False,
+    # "lstm_hidden_dim": 128,
+    # "lstm_num_layers": 2,
 }
 
 
@@ -73,20 +75,24 @@ class CustomTrainer(Trainer):
 
 
 def manual_train(model, train_args, train_arg, dataset):
-    logger = logging.getLogger("RobertuitoBiLSTM")
-    logger.setLevel(logging.INFO)
+
+    run_name = (
+        "RobertuitoBiLSTM"
+        if train_arg.get("blstm", False)
+        else "RobertuitoConv1DBiLSTM"
+    )
 
     params_model = "\n".join(
         [f"{str(k).capitalize()}: {v}" for k, v in train_arg.items()]
     )
 
     notifier = Notifier(
-        title=f"Training RoBERTaBiLSTM\n{params_model}",
+        title=f"Training \n{params_model}",
         webhook_url="https://discord.com/api/webhooks/1330403976205832284/Vv32bfpZW_aGikEzQ2sEYJlcbtEyAE10n2CHIjigZkKkiLeCHVg0Et2IWKz_SWo_m0a3",
     )
 
     notifier(
-        msg=f"Starting train RoBERTaBiLSTM",
+        msg=f"Starting train",
     )
 
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -113,12 +119,10 @@ def manual_train(model, train_args, train_arg, dataset):
     best_macro_f1 = float("-inf")
 
     try:
-        with mlflow.start_run(run_name="RobertuitoBiLSTM"):
+        with mlflow.start_run(run_name=run_name):
             run_id = mlflow.active_run().info.run_id
 
             mlflow.log_params(train_arg)
-
-            logger.info(f"Run ID {run_id}")
 
             progress_bar = tqdm(range(num_training_steps))
 
@@ -153,10 +157,6 @@ def manual_train(model, train_args, train_arg, dataset):
                         mlflow.log_metric(f"train_{k}", v, step=current_step)
 
                     mlflow.log_metric("train_loss", loss.item(), step=current_step)
-
-                    # if i >= 0 and i % 1000 == 0:
-                    #     text = f"Epoch {epoch_idx + 1}\nLoss: {loss.item():.6f}"
-                    #     notifier(msg=f"{text}")
 
                 model.eval()
 
@@ -205,18 +205,17 @@ def manual_train(model, train_args, train_arg, dataset):
 
                 notifier(msg=f"{text}")
 
-            logger.info(f"Best macro F1: {best_macro_f1}")
-            logger.info(f"Run ID {run_id}")
-
     except Exception as e:
+        print(f"Error on training: {e}")
         notifier(
             msg=f"Error: {e}",
         )
+        raise e
 
 
 def train_model(
     base_model: str = "pysentimiento/robertuito-base-uncased",
-    dataset_path: str = "e:\\Media\\Python\\ID-v3-Scrapper\\model\\data\\parsed\\tweets_parsed.csv",
+    dataset_path: str = "e:\\Media\\Python\\ID-v3-Scrapper\\model\\data\\parsed\\tweets_parsed_pruned.csv",
     limit: int = None,
 ):
     gc.collect()

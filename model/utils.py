@@ -17,10 +17,13 @@ from transformers import (
     AutoTokenizer,
 )
 
+logging.getLogger("mlflow.models.model").setLevel(logging.ERROR)
+
 logging.basicConfig()
-warnings.filterwarnings("ignore")
 logger = logging.getLogger("Utils")
 logger.setLevel(logging.INFO)
+
+warnings.filterwarnings("ignore")
 
 random_state = 42
 set_seed(random_state)
@@ -104,13 +107,129 @@ class TransformerPlusBLSTM(nn.Module):
         return logits, loss
 
 
+class TransformerConv1DBLSTM(nn.Module):
+    def __init__(
+        self,
+        transformer_model,
+        conv_out_channels,
+        conv_kernel_size,
+        lstm_hidden_dim,
+        lstm_num_layers,
+        output_dim,
+        dropout=0.5,
+    ):
+        super(TransformerConv1DBLSTM, self).__init__()
+        self.transformer = transformer_model
+
+        self.conv1d = nn.Conv1d(
+            in_channels=self.transformer.config.hidden_size,
+            out_channels=conv_out_channels,
+            kernel_size=conv_kernel_size,
+        )
+        self.lstm = nn.LSTM(
+            input_size=conv_out_channels,
+            hidden_size=lstm_hidden_dim,
+            num_layers=lstm_num_layers,
+            batch_first=True,
+            dropout=dropout,
+            bidirectional=True,
+        )
+        self.fc = nn.Linear(
+            lstm_hidden_dim * 2, output_dim
+        )  # *2 por la bidireccionalidad de LSTM
+        self.dropout = nn.Dropout(dropout)
+        self.loss_fn = nn.CrossEntropyLoss()
+
+    def forward(
+        self, input_ids, attention_mask=None, token_type_ids=None, label=None, **kwargs
+    ):
+        transformer_output = self.transformer.roberta(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+        )[0]
+
+        x = transformer_output.transpose(1, 2)
+        x = self.conv1d(x)
+        x = x.transpose(1, 2)
+
+        lstm_out, (hn, cn) = self.lstm(x)
+
+        final_hidden_state = torch.cat((hn[-2, :, :], hn[-1, :, :]), dim=1)
+
+        logits = self.fc(self.dropout(final_hidden_state))
+
+        loss = None
+        if label is not None:
+            loss = self.loss_fn(logits, label)
+
+        return logits, loss
+
+
+class TransformerConv2DBLSTM(nn.Module):
+    def __init__(
+        self,
+        transformer_model,
+        conv_out_channels,
+        conv_kernel_size,
+        lstm_hidden_dim,
+        lstm_num_layers,
+        output_dim,
+        dropout=0.5,
+    ):
+        super(TransformerConv2DBLSTM, self).__init__()
+        self.transformer = transformer_model
+
+        self.conv2d = nn.Conv2d(
+            in_channels=1, out_channels=conv_out_channels, kernel_size=conv_kernel_size
+        )
+        self.lstm = nn.LSTM(
+            input_size=conv_out_channels,
+            hidden_size=lstm_hidden_dim,
+            num_layers=lstm_num_layers,
+            batch_first=True,
+            dropout=dropout,
+            bidirectional=True,
+        )
+        self.fc = nn.Linear(
+            lstm_hidden_dim * 2, output_dim
+        )  # *2 por la bidireccionalidad de LSTM
+        self.dropout = nn.Dropout(dropout)
+        self.loss_fn = nn.CrossEntropyLoss()
+
+    def forward(
+        self, input_ids, attention_mask=None, token_type_ids=None, label=None, **kwargs
+    ):
+        transformer_output = self.transformer.roberta(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+        )[0]
+
+        x = transformer_output.unsqueeze(1)
+        x = self.conv2d(x)
+        x = x.squeeze(3)
+
+        lstm_out, (hn, cn) = self.lstm(x)
+
+        final_hidden_state = torch.cat((hn[-2, :, :], hn[-1, :, :]), dim=1)
+
+        logits = self.fc(self.dropout(final_hidden_state))
+
+        loss = None
+        if label is not None:
+            loss = self.loss_fn(logits, label)
+
+        return logits, loss
+
+
 def config_device(model):
     """
     Config device
     """
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    logger.info(f"Using device {device.upper()}")
+    logger.debug(f"Using device {device.upper()}")
 
     model.to(device)
 
@@ -130,7 +249,7 @@ def load_model(
     """
     assert base_model == BASE_MODEL, "Please provide a valid model name"
 
-    logger.info(f"Loading model {base_model} {id2label}")
+    logger.debug(f"Loading model {base_model}")
 
     model = auto_class.from_pretrained(
         base_model,
@@ -153,11 +272,22 @@ def load_model(
     model.config.label2id = label2id
 
     if train_arg.get("blstm", False):
+        logger.debug("Adding BLSTM layer")
         model = TransformerPlusBLSTM(
             model,
             hidden_dim=train_arg.get("lstm_hidden_dim", 128),
             num_layers=train_arg.get("lstm_num_layers", 2),
             loss_fn=nn.CrossEntropyLoss(),
+        )
+    elif train_arg.get("conv1d", False):
+        logger.debug("Adding Conv1D and BLSTM layer")
+        model = TransformerConv1DBLSTM(
+            model,
+            conv_out_channels=train_arg.get("conv_out_channels", 256),
+            conv_kernel_size=train_arg.get("conv_kernel_size", 3),
+            lstm_hidden_dim=train_arg.get("lstm_hidden_dim", 128),
+            lstm_num_layers=train_arg.get("lstm_num_layers", 4),
+            output_dim=len(id2label),
         )
 
     if not skip_device:
@@ -176,7 +306,7 @@ def load_dataset(
 ):
 
     if os.path.exists(dataset_path.replace(".csv", "_dataset")) and not force:
-        logger.info(f"Loading dataset from {dataset_path.replace('.csv', '_dataset')}")
+        logger.debug(f"Loading dataset from {dataset_path.replace('.csv', '_dataset')}")
         dataset_dict = DatasetDict.load_from_disk(
             dataset_path.replace(".csv", "_dataset")
         )
@@ -211,18 +341,18 @@ def load_dataset(
     test_df, val_df = train_test_split(
         temp_df, test_size=0.5, random_state=random_state
     )
-    logger.info(f"Dataset: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
+    logger.debug(f"Dataset: {len(train_df)}, Val: {len(val_df)}, Test: {len(test_df)}")
 
     if preprocess:
 
         def preprocess_with_args(x):
             return preprocess_tweet(x, **preprocessing_args)
 
-        logger.info("Preprocessing train dataset")
+        logger.debug("Preprocessing train dataset")
         train_df["text"] = train_df["text"].apply(preprocess_with_args)
-        logger.info("Preprocessing test dataset")
+        logger.debug("Preprocessing test dataset")
         test_df["text"] = test_df["text"].apply(preprocess_with_args)
-        logger.info("Preprocessing val dataset")
+        logger.debug("Preprocessing val dataset")
         val_df["text"] = val_df["text"].apply(preprocess_with_args)
 
     if return_df:
@@ -248,7 +378,7 @@ def load_dataset(
         val_df[columns], features=features, preserve_index=False
     )
 
-    logger.info(f"Dataset instances created")
+    logger.debug(f"Dataset instances created")
 
     dataset_dict = DatasetDict(
         train=train_dataset, test=test_dataset, validation=val_dataset
@@ -260,7 +390,7 @@ def load_dataset(
         dataset_dict["validation"] = dataset_dict["validation"].select(range(limit))
 
     # save dataset
-    logger.info(f"Saving dataset to {dataset_path.replace('.csv', '_dataset')}")
+    logger.debug(f"Saving dataset to {dataset_path.replace('.csv', '_dataset')}")
     dataset_dict.save_to_disk(dataset_path.replace(".csv", "_dataset"))
 
     return dataset_dict

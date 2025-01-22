@@ -1,0 +1,15 @@
+artifact_uri: file:///E:/Media/Python/ID-v3-Scrapper/model/mlruns/0/835a4d18d02840a3af5551ff4b9acdec/artifacts
+end_time: 1737459223773
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: 835a4d18d02840a3af5551ff4b9acdec
+run_name: RobertuitoConv1DBiLSTM
+run_uuid: 835a4d18d02840a3af5551ff4b9acdec
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1737456348987
+status: 3
+tags: []
+user_id: emman

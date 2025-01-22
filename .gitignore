@@ -6,6 +6,6 @@ __pycache__
 
 .DS_Store
 
-mlruns/
+artifacts/
 model/results/
-tweets_parsed_dataset/
+tweets_parsed_pruned_dataset/
