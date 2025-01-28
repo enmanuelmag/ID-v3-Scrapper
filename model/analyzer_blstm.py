@@ -173,7 +173,7 @@ class AnalyzerForSequenceClassification(BaseBiLSTMAnalyzer):
         sentence = preprocess_tweet(sentence, **self.preprocessing_args)
         inputs = [sentence]
 
-        if context:
+        if context and False:
             if preprocess_context:
                 context = preprocess_tweet(context, **self.preprocessing_args)
             inputs.append(context)
@@ -283,6 +283,11 @@ def create_analyzer_blstm(
     --------
         Analyzer object for the given task and language
     """
+    import gc
+    import torch
+
+    gc.collect()
+    torch.cuda.empty_cache()
 
     preprocessing_args = preprocessing_args or {}
 
