@@ -1,6 +1,8 @@
 import os
 import time
 import random
+import re
+import pandas as pd
 
 from selenium import webdriver
 from typing import Literal, List, Callable
@@ -8,6 +10,31 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.remote.webdriver import WebElement
 from selenium.webdriver.support import expected_conditions as EC
+
+PIVOT_DATE = "2025-01-10"
+
+
+def str_to_date_tiktok(text: str, pivot_date=PIVOT_DATE) -> pd.Timestamp:
+    if text and re.match(r"\d{4}-\d{2}-\d{2}", text):
+        return pd.to_datetime(text, errors="coerce")
+    elif text and re.match(r"\d{2}/\d{2}", text):
+        return pd.to_datetime(text, format="%m/%d/%Y", errors="coerce")
+    elif "ago" in text:
+        pivot_date = pd.to_datetime(pivot_date, errors="coerce")
+
+        if "d" in text:
+            date = pivot_date - pd.Timedelta(days=int(text.split(" ")[0]))
+        elif "h" in text:
+            date = pivot_date - pd.Timedelta(hours=int(text.split(" ")[0]))
+        elif "w" in text:
+            date = pivot_date - pd.Timedelta(weeks=int(text.split(" ")[0]))
+        elif "m" in text:
+            date = pivot_date - pd.Timedelta(minutes=int(text.split(" ")[0]))
+        else:
+            date = pivot_date
+        return date
+
+    return pd.NaT
 
 
 def clean_url(url: str) -> str:

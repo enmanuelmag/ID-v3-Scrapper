@@ -1,0 +1,16 @@
+artifact_uri: file:///E:/Media/Python/ID-v3-Scrapper/model/mlruns/0/a5f06d2e6a8545fe8a80f8f2256e2e0f/artifacts
+deleted_time: 1737826974961
+end_time: 1737826942879
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: deleted
+run_id: a5f06d2e6a8545fe8a80f8f2256e2e0f
+run_name: TransformerConv1D
+run_uuid: a5f06d2e6a8545fe8a80f8f2256e2e0f
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1737826920515
+status: 4
+tags: []
+user_id: emman

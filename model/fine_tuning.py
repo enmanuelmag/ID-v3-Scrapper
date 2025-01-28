@@ -1,3 +1,7 @@
+from datasets.utils.logging import disable_progress_bar
+
+disable_progress_bar()
+
 import warnings
 import logging
 
@@ -27,15 +31,11 @@ except ImportError:
 
 
 train_arg = {
-    "epochs": 14,
-    "batch_size": 92,
-    "accumulation_steps": 1,
+    "batch_size": 128,
     "warmup_ratio": 0.1,
-    "learning_rate": 5e-5,
     "weight_decay": 0.01,
-    # "blstm": True,
-    # "lstm_hidden_dim": 128,
-    # "lstm_num_layers": 2,
+    "learning_rate": 0.0001,  #  0.00005
+    "accumulation_steps": 1,
 }
 
 BASE_MODEL = "pysentimiento/robertuito-base-uncased"
@@ -91,6 +91,8 @@ def fine_tuning_blstm(base_model: str, dataset_path: str, force: bool = False):
 
     progress_bar = tqdm(total=len(configs), desc="Fine tuning")
 
+    run_name = "RobertuitoLSTM"
+
     for config in configs:
         gc.collect()
         torch.cuda.empty_cache()
@@ -103,7 +105,7 @@ def fine_tuning_blstm(base_model: str, dataset_path: str, force: bool = False):
         train_arg["lstm_hidden_dim"] = hidden_dim
         train_arg["lstm_num_layers"] = num_layers
 
-        if not force and check_already_ran(train_arg, "RobertuitoBiLSTM"):
+        if not force and check_already_ran(train_arg, run_name):
             progress_bar.update(1)
             continue
 
@@ -131,25 +133,40 @@ def fine_tuning_blstm(base_model: str, dataset_path: str, force: bool = False):
             training_args,
             train_arg,
             dataset,
+            run_name,
         )
 
         progress_bar.update(1)
 
 
-def fine_tuning_conv1D(base_model: str, dataset_path: str, force: bool = False):
-    # conv1D
-    # conv1D_filters = [64, 128, 256, 512]  # 512 new
-    # conv1D_kernel_size = [3, 5, 7, 9]  # 9 new
-
+def fine_tuning_conv1D(
+    base_model: str, dataset_path: str, epochs: int, force: bool = False
+):
     configs = [
+        # 64
+        # {"conv1D_filters": 64, "conv1D_kernel_size": 3},
+        # {"conv1D_filters": 64, "conv1D_kernel_size": 5},
+        # {"conv1D_filters": 64, "conv1D_kernel_size": 7},
+        # {"conv1D_filters": 64, "conv1D_kernel_size": 9},
+        # 128
+        # {"conv1D_filters": 128, "conv1D_kernel_size": 3},
+        {"conv1D_filters": 128, "conv1D_kernel_size": 5},
+        {"conv1D_filters": 128, "conv1D_kernel_size": 12},
+        # {"conv1D_filters": 128, "conv1D_kernel_size": 7},
+        # {"conv1D_filters": 128, "conv1D_kernel_size": 9},
+        # 256
+        # {"conv1D_filters": 256, "conv1D_kernel_size": 3},
+        # {"conv1D_filters": 256, "conv1D_kernel_size": 5},
         {"conv1D_filters": 256, "conv1D_kernel_size": 7},
-        {"conv1D_filters": 512, "conv1D_kernel_size": 3},
-        {"conv1D_filters": 512, "conv1D_kernel_size": 5},
+        # {"conv1D_filters": 256, "conv1D_kernel_size": 9},
+        # 512
+        # {"conv1D_filters": 512, "conv1D_kernel_size": 3},
         {"conv1D_filters": 512, "conv1D_kernel_size": 7},
         {"conv1D_filters": 512, "conv1D_kernel_size": 9},
+        # {"conv1D_filters": 512, "conv1D_kernel_size": 9},
     ]
 
-    progress_bar = tqdm(total=len(configs), desc="Fine tuning")
+    progress_bar = tqdm(total=len(configs), unit="model")
 
     for config in configs:
 
@@ -159,25 +176,21 @@ def fine_tuning_conv1D(base_model: str, dataset_path: str, force: bool = False):
         filters = config["conv1D_filters"]
         kernel_size = config["conv1D_kernel_size"]
 
+        train_arg["epochs"] = epochs
+
         # conv1D
-        train_arg["conv1d"] = True
         train_arg["blstm"] = False
+        train_arg["conv1d"] = True
         train_arg["conv1D_filters"] = filters
         train_arg["conv1D_kernel_size"] = kernel_size
 
-        # blstm
-        train_arg["lstm_hidden_dim"] = 128
-        train_arg["lstm_num_layers"] = 4
-
-        if not force and check_already_ran(train_arg, "RobertuitoConv1DBiLSTM"):
+        if not force and check_already_ran(train_arg, "RobertuitoConv1D"):
             progress_bar.update(1)
             continue
 
         progress_bar.set_description(
-            f"Training: {filters} filters, {kernel_size} kernel size"
+            f"Training model {filters} filters - {kernel_size} kernel size"
         )
-
-        training_args = get_training_arguments(base_model, "sentiment", train_arg)
 
         model, tokenizer = load_model(base_model, train_arg)
 
@@ -194,7 +207,6 @@ def fine_tuning_conv1D(base_model: str, dataset_path: str, force: bool = False):
 
         manual_train(
             model,
-            training_args,
             train_arg,
             dataset,
         )
@@ -205,16 +217,17 @@ def fine_tuning_conv1D(base_model: str, dataset_path: str, force: bool = False):
 def fine_tuning(
     type_model: str,
     force: bool = False,
+    epochs: int = 6,
     base_model: str = BASE_MODEL,
     dataset_path: str = DATASET_PATH,
 ):
     assert type_model in ["blstm", "conv1D"], "Invalid type"
 
     if type_model == "blstm":
-        fine_tuning_blstm(base_model, dataset_path, force)
+        fine_tuning_blstm(base_model, dataset_path, epochs, force)
 
     elif type_model == "conv1D":
-        fine_tuning_conv1D(base_model, dataset_path, force)
+        fine_tuning_conv1D(base_model, dataset_path, epochs, force)
 
 
 if __name__ == "__main__":

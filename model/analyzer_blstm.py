@@ -2,6 +2,8 @@ import torch
 import logging
 import transformers
 
+from transformers import AutoModelForSequenceClassification
+
 from pysentimiento.preprocessing import preprocess_tweet
 from datasets import Dataset
 from torch.nn import functional as F
@@ -132,12 +134,16 @@ class AnalyzerForSequenceClassification(BaseBiLSTMAnalyzer):
 
     @classmethod
     def from_model_name(
-        cls, lbstm, task, preprocessing_args={}, batch_size=32, **kwargs
+        cls, lbstm, model_path, preprocessing_args={}, batch_size=32, **kwargs
     ):
         train_arg = {
             "blstm": lbstm,
         }
-        model, tokenizer = load_model(BASE_MODEL, train_arg)
+        model, tokenizer = load_model(
+            BASE_MODEL,
+            train_arg,
+            custom_model=AutoModelForSequenceClassification.from_pretrained(model_path),
+        )
         return cls(model, tokenizer, preprocessing_args, batch_size)
 
     def _get_output(self, sentence, logits, context=None):
@@ -255,7 +261,7 @@ class AnalyzerForSequenceClassification(BaseBiLSTMAnalyzer):
 
 
 def create_analyzer_blstm(
-    task=None,
+    model_path=None,
     lang=None,
     lbstm=None,
     preprocessing_args=preprocessing_args,
@@ -281,7 +287,7 @@ def create_analyzer_blstm(
     preprocessing_args = preprocessing_args or {}
 
     return AnalyzerForSequenceClassification.from_model_name(
-        task=task,
+        model_path=model_path,
         lbstm=lbstm,
         preprocessing_args=preprocessing_args,
         lang=lang,

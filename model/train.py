@@ -74,13 +74,17 @@ class CustomTrainer(Trainer):
         super().log(logs, start_time)
 
 
-def manual_train(model, train_args, train_arg, dataset):
+def move_inputs_to_device(inputs, device):
+    skip_keys = ["text", "lang"]
 
-    run_name = (
-        "RobertuitoBiLSTM"
-        if train_arg.get("blstm", False)
-        else "RobertuitoConv1DBiLSTM"
-    )
+    for k, v in inputs.items():
+        if k not in skip_keys:
+            inputs[k] = torch.tensor(v).to(device)
+
+    return inputs
+
+
+def manual_train(model, train_arg, dataset):
 
     params_model = "\n".join(
         [f"{str(k).capitalize()}: {v}" for k, v in train_arg.items()]
@@ -95,13 +99,11 @@ def manual_train(model, train_args, train_arg, dataset):
         msg=f"Starting train",
     )
 
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    num_epochs = train_arg.get("epochs")
+    learning_rate = train_arg.get("learning_rate")
 
-    num_epochs = train_args.num_train_epochs
-    learning_rate = train_args.learning_rate
-
-    train_dataloader = dataset["train"].batch(train_args.per_device_train_batch_size)
-    test_dataloader = dataset["test"].batch(train_args.per_device_train_batch_size)
+    train_dataloader = dataset["train"].batch(train_arg.get("batch_size"))
+    test_dataloader = dataset["test"].batch(train_arg.get("batch_size"))
 
     optimizer = AdamW(model.parameters(), lr=learning_rate)
 
@@ -119,27 +121,20 @@ def manual_train(model, train_args, train_arg, dataset):
     best_macro_f1 = float("-inf")
 
     try:
-        with mlflow.start_run(run_name=run_name):
-            run_id = mlflow.active_run().info.run_id
+        with mlflow.start_run(run_name=model.name):
 
             mlflow.log_params(train_arg)
 
-            progress_bar = tqdm(range(num_training_steps))
+            progress_bar = tqdm(range(num_training_steps), unit="step", desc="Training")
 
             for epoch_idx in range(num_epochs):
 
                 model.train()
-                for i, batch in enumerate(train_dataloader):
-                    batch["input_ids"] = torch.tensor(batch["input_ids"]).to(device)
-                    batch["attention_mask"] = torch.tensor(batch["attention_mask"]).to(
-                        device
-                    )
-                    batch["token_type_ids"] = torch.tensor(batch["token_type_ids"]).to(
-                        device
-                    )
-                    batch["label"] = torch.tensor(batch["label"]).to(device)
+                for batch in train_dataloader:
 
-                    logits_train, loss = model(**batch)
+                    logits_train, loss = model(
+                        **move_inputs_to_device(batch, model.device)
+                    )
 
                     loss.backward()
                     optimizer.step()
@@ -163,17 +158,9 @@ def manual_train(model, train_args, train_arg, dataset):
                 ret_mean = {}
 
                 for batch in test_dataloader:
-                    batch["input_ids"] = torch.tensor(batch["input_ids"]).to(device)
-                    batch["attention_mask"] = torch.tensor(batch["attention_mask"]).to(
-                        device
-                    )
-                    batch["token_type_ids"] = torch.tensor(batch["token_type_ids"]).to(
-                        device
-                    )
-                    batch["label"] = torch.tensor(batch["label"]).to(device)
 
                     with torch.no_grad():
-                        logits, _ = model(**batch)
+                        logits, _ = model(**move_inputs_to_device(batch, model.device))
 
                         ret = get_metrics(
                             logits.detach().cpu().numpy(),
@@ -252,6 +239,7 @@ def train_model(
                 "tokenizer": tokenizer,
                 "callbacks": [],
             }
+
             active_run = mlflow.active_run()
             artifact_uri = active_run.info.artifact_uri
             trainer = CustomTrainer(**trainer_args)
@@ -263,7 +251,6 @@ def train_model(
     else:
         manual_train(
             model,
-            training_args,
             train_arg,
             dataset,
         )

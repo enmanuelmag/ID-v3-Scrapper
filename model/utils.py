@@ -58,21 +58,29 @@ class TransformerPlusBLSTM(nn.Module):
         assert loss_fn is not None, "Please provide a loss function"
 
         super(TransformerPlusBLSTM, self).__init__()
+        self.name = "TransformerPlusBLSTM"
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.transformer = transformer_model
 
         self.lstm = nn.LSTM(
-            self.transformer.config.hidden_size,
-            hidden_dim,
-            num_layers,
+            input_size=self.transformer.config.hidden_size,
+            hidden_size=hidden_dim,
+            num_layers=num_layers,
             batch_first=True,
             dropout=dropout,
             bidirectional=True,
         )
 
-        self.fc = nn.Linear(
-            hidden_dim * 2, output_dim
-        )  # *2 por la bidireccionalidad de LSTM
+        self.intermediate_fc = nn.Linear(
+            hidden_dim * 2 + self.transformer.config.hidden_size, 256
+        )  # *2 por la bidireccionalidad de LSTM + hidden_size de transformer
+
+        self.fc = nn.Linear(hidden_dim * 2, output_dim)
+
+        self.dropout = nn.Dropout(dropout)
+
+        self.softmax = nn.Softmax(dim=1)
 
         self.loss_fn = loss_fn
 
@@ -84,21 +92,36 @@ class TransformerPlusBLSTM(nn.Module):
         label=None,
         **kwargs,
     ):
-        transformer_output = self.transformer.roberta(
+        # Obtener las representaciones de los tokens del transformer
+        transformer_outputs = self.transformer.roberta(
             input_ids,
             attention_mask=attention_mask,
             token_type_ids=token_type_ids,
-        )[
+        )
+
+        # Obtener la última capa oculta del transformer
+        last_hidden_state = transformer_outputs[
             0
         ]  # Salida del transformer (sin el head de clasificación)
 
-        lstm_out, (hn, cn) = self.lstm(transformer_output)
+        # Pasar el input_ids a la BLSTM
+        lstm_out, (hn, cn) = self.lstm(last_hidden_state)
 
-        final_hidden_state = torch.cat(
-            (hn[-2, :, :], hn[-1, :, :]), dim=1
-        )  # Concatenar las dos direcciones
+        # Concatenar las dos direcciones de la BLSTM
+        # final_hidden_state = torch.cat((hn[-2, :, :], hn[-1, :, :]), dim=1)
 
-        logits = self.fc(final_hidden_state)
+        # aplicar pooling promedio al final_hidden_state
+        avg_lstm_out = torch.mean(lstm_out, dim=1)
+
+        combined_output = torch.cat((avg_lstm_out, last_hidden_state[:, 0, :]), dim=1)
+
+        # Pasar la salida combinada por una capa oculta adicional
+        intermediate_output = self.dropout(
+            torch.relu(self.intermediate_fc(combined_output))
+        )
+
+        # Pasar la salida de la capa oculta a la capa totalmente conectada
+        logits = self.fc(intermediate_output)
 
         loss = None
         if label is not None:
@@ -120,6 +143,8 @@ class TransformerConv1DBLSTM(nn.Module):
     ):
         super(TransformerConv1DBLSTM, self).__init__()
         self.transformer = transformer_model
+        self.name = "TransformerConv1DBLSTM"
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.conv1d = nn.Conv1d(
             in_channels=self.transformer.config.hidden_size,
@@ -166,35 +191,35 @@ class TransformerConv1DBLSTM(nn.Module):
         return logits, loss
 
 
-class TransformerConv2DBLSTM(nn.Module):
+class TransformerConv1D(nn.Module):
     def __init__(
         self,
         transformer_model,
         conv_out_channels,
         conv_kernel_size,
-        lstm_hidden_dim,
-        lstm_num_layers,
+        hidden_dim,
         output_dim,
         dropout=0.5,
     ):
-        super(TransformerConv2DBLSTM, self).__init__()
+        super(TransformerConv1D, self).__init__()
         self.transformer = transformer_model
+        self.name = "TransformerConv1D-V2"
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        self.conv2d = nn.Conv2d(
-            in_channels=1, out_channels=conv_out_channels, kernel_size=conv_kernel_size
+        self.conv1d = nn.Conv1d(
+            in_channels=self.transformer.config.hidden_size,
+            out_channels=conv_out_channels,
+            kernel_size=conv_kernel_size,
         )
-        self.lstm = nn.LSTM(
-            input_size=conv_out_channels,
-            hidden_size=lstm_hidden_dim,
-            num_layers=lstm_num_layers,
-            batch_first=True,
-            dropout=dropout,
-            bidirectional=True,
-        )
-        self.fc = nn.Linear(
-            lstm_hidden_dim * 2, output_dim
-        )  # *2 por la bidireccionalidad de LSTM
+
         self.dropout = nn.Dropout(dropout)
+
+        self.dense = nn.Linear(conv_out_channels, hidden_dim)
+
+        self.fc = nn.Linear(hidden_dim, output_dim)
+
+        self.softmax = nn.Softmax(dim=1)
+
         self.loss_fn = nn.CrossEntropyLoss()
 
     def forward(
@@ -206,21 +231,29 @@ class TransformerConv2DBLSTM(nn.Module):
             token_type_ids=token_type_ids,
         )[0]
 
-        x = transformer_output.unsqueeze(1)
-        x = self.conv2d(x)
-        x = x.squeeze(3)
+        x = transformer_output.transpose(1, 2)
 
-        lstm_out, (hn, cn) = self.lstm(x)
+        x = self.conv1d(x)
 
-        final_hidden_state = torch.cat((hn[-2, :, :], hn[-1, :, :]), dim=1)
+        x = x.transpose(1, 2)
 
-        logits = self.fc(self.dropout(final_hidden_state))
+        x = torch.mean(x, dim=1)
+
+        x = self.dense(self.dropout(x))
+
+        x = torch.tanh(x)
+
+        x = self.dropout(x)
+
+        x = self.fc(x)
+
+        x = self.softmax(x)
 
         loss = None
         if label is not None:
-            loss = self.loss_fn(logits, label)
+            loss = self.loss_fn(x, label)
 
-        return logits, loss
+        return x, loss
 
 
 def config_device(model):
@@ -243,20 +276,24 @@ def load_model(
     auto_class=AutoModelForSequenceClassification,
     problem_type=None,
     skip_device=False,
+    custom_model=None,
 ):
     """
     Loads model and tokenizer
     """
-    assert base_model == BASE_MODEL, "Please provide a valid model name"
+    # assert base_model == BASE_MODEL, "Please provide a valid model name"
 
     logger.debug(f"Loading model {base_model}")
 
-    model = auto_class.from_pretrained(
-        base_model,
-        return_dict=True,
-        num_labels=len(id2label),
-        problem_type=problem_type,
-    )
+    if not custom_model:
+        model = auto_class.from_pretrained(
+            base_model,
+            return_dict=True,
+            num_labels=len(id2label),
+            problem_type=problem_type,
+        )
+    else:
+        model = custom_model
 
     tokenizer = AutoTokenizer.from_pretrained(base_model)
     tokenizer.model_max_length = max_length
@@ -281,12 +318,11 @@ def load_model(
         )
     elif train_arg.get("conv1d", False):
         logger.debug("Adding Conv1D and BLSTM layer")
-        model = TransformerConv1DBLSTM(
-            model,
+        model = TransformerConv1D(
+            transformer_model=model,
             conv_out_channels=train_arg.get("conv_out_channels", 256),
             conv_kernel_size=train_arg.get("conv_kernel_size", 3),
-            lstm_hidden_dim=train_arg.get("lstm_hidden_dim", 128),
-            lstm_num_layers=train_arg.get("lstm_num_layers", 4),
+            hidden_dim=train_arg.get("hidden_dim", 128),
             output_dim=len(id2label),
         )
 
