@@ -11,30 +11,50 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.remote.webdriver import WebElement
 from selenium.webdriver.support import expected_conditions as EC
 
-PIVOT_DATE = "2025-01-10"
 
+def str_to_date_tiktok(text: str, pivot_date="2025-01-30") -> str:
+    text = str(text).strip()
 
-def str_to_date_tiktok(text: str, pivot_date=PIVOT_DATE) -> pd.Timestamp:
-    if text and re.match(r"\d{4}-\d{2}-\d{2}", text):
-        return pd.to_datetime(text, errors="coerce")
-    elif text and re.match(r"\d{2}/\d{2}", text):
-        return pd.to_datetime(text, format="%m/%d/%Y", errors="coerce")
+    def _parse_date(_text: str) -> str:
+        formats = ["%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d", "%Y/%m/%d"]
+        for fmt in formats:
+            try:
+                str_date = pd.to_datetime(_text, format=fmt, errors="raise")
+                return str_date.strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+
+    if text and re.match(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", text):
+        return _parse_date(text)
+    elif text and re.match(r"\d{1,2}[-/]\d{1,2}[-/]\d{4}", text):
+        return _parse_date(text)
+    elif text and re.match(r"\d{1,2}[-/]\d{1,2}", text):
+        if "-" in text:
+            _, month = text.split("-")
+        else:
+            _, month = text.split("/")
+        if month == 1:
+            text = f"{text}-2025"
+        else:
+            text = f"{text}-2024"
+        text = text.replace("/", "-")
+        str_date = pd.to_datetime(text, format="%m-%d-%Y", errors="raise")
+        return str_date.strftime("%Y-%m-%d")
     elif "ago" in text:
-        pivot_date = pd.to_datetime(pivot_date, errors="coerce")
-
+        pivot_date = pd.to_datetime(pivot_date, errors="raise", format="%Y-%m-%d %H:%M:%S")
         if "d" in text:
-            date = pivot_date - pd.Timedelta(days=int(text.split(" ")[0]))
+            date = pivot_date - pd.Timedelta(days=int(text.split("d ago")[0]))
         elif "h" in text:
-            date = pivot_date - pd.Timedelta(hours=int(text.split(" ")[0]))
+            date = pivot_date - pd.Timedelta(hours=int(text.split("h ago")[0]))
         elif "w" in text:
-            date = pivot_date - pd.Timedelta(weeks=int(text.split(" ")[0]))
+            date = pivot_date - pd.Timedelta(weeks=int(text.split("w ago")[0]))
         elif "m" in text:
-            date = pivot_date - pd.Timedelta(minutes=int(text.split(" ")[0]))
+            date = pivot_date - pd.Timedelta(month=int(text.split("m ago")[0]))
         else:
             date = pivot_date
-        return date
+        return date.strftime("%Y-%m-%d")
 
-    return pd.NaT
+    return None
 
 
 def clean_url(url: str) -> str:
@@ -104,7 +124,7 @@ class SearcherDriver:
     def is_url_scraped(self) -> bool:
         result = clean_url(self.driver.current_url) in self.url_scraped
 
-        print(f"[DRIVER] Scraped: {result} - URL: {clean_url(self.driver.current_url)}")
+        print(f"[DRIVER] Scraped: {result}")
 
         return result
 
@@ -113,7 +133,7 @@ class SearcherDriver:
             print(f"[DRIVER] File not found: {self.file} - Creating new file")
             with open(self.file, "w") as f:
                 f.write(
-                    "link	description	username	date	links	comments	shares	comments_text	city\n"
+                    "link	description	username	date	links	comments	shares	comments_text	scrapped_at	city\n"
                 )
             return []
 
@@ -136,7 +156,7 @@ class SearcherDriver:
 
     def random_sleep(self, min_v=1, max_v=5):
         seconds = random.randint(min_v, max_v)
-        print(f"[DRIVER] Sleeping for {seconds} seconds")
+        #print(f"[DRIVER] Sleeping for {seconds} seconds")
         time.sleep(seconds)
 
     def get_element_by(
@@ -208,7 +228,7 @@ class SearcherDriver:
 
     def run(self, run_fn: Callable):
         try:
-            print(f"[DRIVER] Running {run_fn.__name__}")
+            #print(f"[DRIVER] Running {run_fn.__name__}")
             run_fn(self)
         except Exception as e:
             raise e
