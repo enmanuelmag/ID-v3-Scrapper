@@ -75,13 +75,15 @@ class CustomTrainer(Trainer):
 
 
 def move_inputs_to_device(inputs, device):
-    skip_keys = ["text", "lang"]
+    extract_keys = ["input_ids", "attention_mask", "label"]
+
+    batch = {}
 
     for k, v in inputs.items():
-        if k not in skip_keys:
-            inputs[k] = torch.tensor(v).to(device)
+        if k in extract_keys:
+            batch[k] = torch.tensor(v).to(device)
 
-    return inputs
+    return batch
 
 
 def manual_train(model, train_arg, dataset):
@@ -102,8 +104,8 @@ def manual_train(model, train_arg, dataset):
     num_epochs = train_arg.get("epochs")
     learning_rate = train_arg.get("learning_rate")
 
-    train_dataloader = dataset["train"].batch(train_arg.get("batch_size"))
-    test_dataloader = dataset["test"].batch(train_arg.get("batch_size"))
+    train_dataloader = dataset["train"]
+    test_dataloader = dataset["test"]
 
     optimizer = AdamW(model.parameters(), lr=learning_rate)
 
@@ -131,7 +133,6 @@ def manual_train(model, train_arg, dataset):
 
                 model.train()
                 for batch in train_dataloader:
-
                     logits_train, loss = model(
                         **move_inputs_to_device(batch, model.device)
                     )
@@ -144,8 +145,7 @@ def manual_train(model, train_arg, dataset):
                     current_step += 1
 
                     ret = get_metrics(
-                        logits_train.detach().cpu().numpy(),
-                        batch["label"].detach().cpu().numpy(),
+                        logits_train.detach().cpu().numpy(), np.array(batch["label"])
                     )
 
                     for k, v in ret.items():
@@ -163,8 +163,7 @@ def manual_train(model, train_arg, dataset):
                         logits, _ = model(**move_inputs_to_device(batch, model.device))
 
                         ret = get_metrics(
-                            logits.detach().cpu().numpy(),
-                            batch["label"].detach().cpu().numpy(),
+                            logits.detach().cpu().numpy(), np.array(batch["label"])
                         )
 
                         for k, v in ret.items():

@@ -1,7 +1,3 @@
-from datasets.utils.logging import disable_progress_bar
-
-disable_progress_bar()
-
 import warnings
 import logging
 
@@ -17,12 +13,10 @@ import torch
 import fire
 import gc
 
-from typing import List
-
 try:
-    from .utils import load_dataset, load_model, get_training_arguments
+    from .utils import load_dataset, load_model, load_tokenizer
 except ImportError:
-    from utils import load_dataset, load_model, get_training_arguments
+    from utils import load_dataset, load_model, load_tokenizer
 
 try:
     from .train import manual_train
@@ -82,30 +76,57 @@ def check_already_ran(train_arg: dict, model_name: str) -> bool:
     return False
 
 
-def fine_tuning_blstm(base_model: str, dataset_path: str, force: bool = False):
+def fine_tuning_blstm(
+    base_model: str, dataset_path: str, epochs: int, force: bool = False
+):
     # blstm
     # lstm_hidden_dim = [64, 128, 256]  # 64, 256 SIN BUENOS RESULTADOS
     # lstm_num_layers = [4, 8, 10]  # 8 SIN BUENOS RESULTADOS
 
-    configs = [{"lstm_hidden_dim": 128, "lstm_num_layers": 4}]
+    configs = [
+        {"lstm_hidden_dim": 128, "lstm_num_layers": 4},
+        {"lstm_hidden_dim": 128, "lstm_num_layers": 8},
+        {"lstm_hidden_dim": 128, "lstm_num_layers": 10},
+        {"lstm_hidden_dim": 256, "lstm_num_layers": 4},
+        {"lstm_hidden_dim": 256, "lstm_num_layers": 8},
+        {"lstm_hidden_dim": 256, "lstm_num_layers": 10},
+        {"lstm_hidden_dim": 512, "lstm_num_layers": 4},
+        {"lstm_hidden_dim": 512, "lstm_num_layers": 8},
+        {"lstm_hidden_dim": 512, "lstm_num_layers": 10},
+    ]
+
+    dataset = load_dataset(dataset_path)
+
+    tokenizer = load_tokenizer(base_model)
+
+    dataset = dataset.map(
+        lambda x: tokenizer(
+            x["text"],
+            padding="max_length",
+            truncation=True,
+        ),
+        batched=True,
+    )
+
+    dataset["train"] = dataset["train"].batch(train_arg.get("batch_size"))
+    dataset["test"] = dataset["test"].batch(train_arg.get("batch_size"))
 
     progress_bar = tqdm(total=len(configs), desc="Fine tuning")
-
-    run_name = "RobertuitoLSTM"
 
     for config in configs:
         gc.collect()
         torch.cuda.empty_cache()
 
+        train_arg["epochs"] = epochs
+
         hidden_dim = config.get("lstm_hidden_dim", 0)
         num_layers = config.get("lstm_num_layers", 0)
 
-        train_arg["blstm"] = True
-        train_arg["conv1d"] = False
+        train_arg["type_model"] = "blstm"
         train_arg["lstm_hidden_dim"] = hidden_dim
         train_arg["lstm_num_layers"] = num_layers
 
-        if not force and check_already_ran(train_arg, run_name):
+        if not force and check_already_ran(train_arg, "RobertuitoLSTM"):
             progress_bar.update(1)
             continue
 
@@ -113,28 +134,11 @@ def fine_tuning_blstm(base_model: str, dataset_path: str, force: bool = False):
             f"Training: {hidden_dim} hidden dim, {num_layers} layers"
         )
 
-        training_args = get_training_arguments(base_model, "sentiment", train_arg)
+        model, _ = load_model(base_model, train_arg)
 
-        model, tokenizer = load_model(base_model, train_arg)
+        model.transformer.resize_token_embeddings(len(tokenizer))
 
-        dataset = load_dataset(dataset_path)
-
-        dataset = dataset.map(
-            lambda x: tokenizer(
-                x["text"],
-                padding=(True if not train_arg.get("blstm", False) else "max_length"),
-                truncation=True,
-            ),
-            batched=True,
-        )
-
-        manual_train(
-            model,
-            training_args,
-            train_arg,
-            dataset,
-            run_name,
-        )
+        manual_train(model, train_arg, dataset)
 
         progress_bar.update(1)
 
@@ -166,10 +170,25 @@ def fine_tuning_conv1D(
         # {"conv1D_filters": 512, "conv1D_kernel_size": 9},
     ]
 
+    dataset = load_dataset(dataset_path)
+
+    tokenizer = load_tokenizer(base_model)
+
+    dataset = dataset.map(
+        lambda x: tokenizer(
+            x["text"],
+            padding="max_length",
+            truncation=True,
+        ),
+        batched=True,
+    )
+
+    dataset["train"] = dataset["train"].batch(train_arg.get("batch_size"))
+    dataset["test"] = dataset["test"].batch(train_arg.get("batch_size"))
+
     progress_bar = tqdm(total=len(configs), unit="model")
 
     for config in configs:
-
         gc.collect()
         torch.cuda.empty_cache()
 
@@ -179,8 +198,7 @@ def fine_tuning_conv1D(
         train_arg["epochs"] = epochs
 
         # conv1D
-        train_arg["blstm"] = False
-        train_arg["conv1d"] = True
+        train_arg["type_model"] = "conv1D"
         train_arg["conv1D_filters"] = filters
         train_arg["conv1D_kernel_size"] = kernel_size
 
@@ -192,24 +210,11 @@ def fine_tuning_conv1D(
             f"Training model {filters} filters - {kernel_size} kernel size"
         )
 
-        model, tokenizer = load_model(base_model, train_arg)
+        model, _ = load_model(base_model, train_arg)
 
-        dataset = load_dataset(dataset_path)
+        model.transformer.resize_token_embeddings(len(tokenizer))
 
-        dataset = dataset.map(
-            lambda x: tokenizer(
-                x["text"],
-                padding="max_length",
-                truncation=True,
-            ),
-            batched=True,
-        )
-
-        manual_train(
-            model,
-            train_arg,
-            dataset,
-        )
+        manual_train(model, train_arg, dataset)
 
         progress_bar.update(1)
 

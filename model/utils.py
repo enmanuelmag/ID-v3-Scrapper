@@ -46,7 +46,7 @@ MODELS UTILS
 """
 
 
-class TransformerPlusBLSTM(nn.Module):
+class TransformerBLSTM(nn.Module):
     def __init__(
         self,
         transformer_model,
@@ -58,8 +58,8 @@ class TransformerPlusBLSTM(nn.Module):
     ):
         assert loss_fn is not None, "Please provide a loss function"
 
-        super(TransformerPlusBLSTM, self).__init__()
-        self.name = "TransformerPlusBLSTM"
+        super(TransformerBLSTM, self).__init__()
+        self.name = "TransformerBLSTM"
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         self.transformer = transformer_model
@@ -73,56 +73,34 @@ class TransformerPlusBLSTM(nn.Module):
             bidirectional=True,
         )
 
-        self.intermediate_fc = nn.Linear(
-            hidden_dim * 2 + self.transformer.config.hidden_size, 256
-        )  # *2 por la bidireccionalidad de LSTM + hidden_size de transformer
-
-        self.fc = nn.Linear(hidden_dim * 2, output_dim)
-
         self.dropout = nn.Dropout(dropout)
+
+        self.dense = nn.Linear(hidden_dim * 2, hidden_dim)
+
+        self.class_layer = nn.Linear(hidden_dim, output_dim)
 
         self.softmax = nn.Softmax(dim=1)
 
         self.loss_fn = loss_fn
 
-    def forward(
-        self,
-        input_ids,
-        attention_mask=None,
-        token_type_ids=None,
-        label=None,
-        **kwargs,
-    ):
-        # Obtener las representaciones de los tokens del transformer
+    def forward(self, input_ids, attention_mask=None, token_type_ids=None, label=None):
         transformer_outputs = self.transformer.roberta(
-            input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-        )
+            input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids
+        )[0]
 
-        # Obtener la última capa oculta del transformer
-        last_hidden_state = transformer_outputs[
-            0
-        ]  # Salida del transformer (sin el head de clasificación)
+        _, (hn, cn) = self.lstm(transformer_outputs)
 
-        # Pasar el input_ids a la BLSTM
-        lstm_out, (hn, cn) = self.lstm(last_hidden_state)
+        final_hidden_state = torch.cat((hn[-2, :, :], hn[-1, :, :]), dim=1)
 
-        # Concatenar las dos direcciones de la BLSTM
-        # final_hidden_state = torch.cat((hn[-2, :, :], hn[-1, :, :]), dim=1)
+        x = self.dropout(final_hidden_state)
 
-        # aplicar pooling promedio al final_hidden_state
-        avg_lstm_out = torch.mean(lstm_out, dim=1)
+        x = self.dense(x)
 
-        combined_output = torch.cat((avg_lstm_out, last_hidden_state[:, 0, :]), dim=1)
+        x = torch.tanh(x)
 
-        # Pasar la salida combinada por una capa oculta adicional
-        intermediate_output = self.dropout(
-            torch.relu(self.intermediate_fc(combined_output))
-        )
+        x = self.dropout(x)
 
-        # Pasar la salida de la capa oculta a la capa totalmente conectada
-        logits = self.fc(intermediate_output)
+        logits = self.softmax(self.class_layer(x))
 
         loss = None
         if label is not None:
@@ -278,6 +256,7 @@ def load_model(
     problem_type=None,
     skip_device=False,
     custom_model=None,
+    build_tokenizer=False,
 ):
     """
     Loads model and tokenizer
@@ -296,29 +275,42 @@ def load_model(
     else:
         model = custom_model
 
-    tokenizer = AutoTokenizer.from_pretrained(base_model)
-    tokenizer.model_max_length = max_length
+    tokenizer = None
 
     label2id = {label: i for i, label in id2label.items()}
 
-    special_tokens = list(preprocessing_args.values())
+    if build_tokenizer:
+        tokenizer = AutoTokenizer.from_pretrained(base_model)
+        tokenizer.model_max_length = max_length
 
-    tokenizer.add_tokens(special_tokens)
+        special_tokens = list(preprocessing_args.values())
 
-    model.resize_token_embeddings(len(tokenizer))
+        tokenizer.add_tokens(special_tokens)
+
+        model.resize_token_embeddings(len(tokenizer))
+
     model.config.id2label = id2label
     model.config.label2id = label2id
 
-    if train_arg.get("blstm", False):
+    if train_arg.get("type_model") == "blstm":
         logger.debug("Adding BLSTM layer")
-        model = TransformerPlusBLSTM(
+        model = TransformerBLSTM(
             model,
             hidden_dim=train_arg.get("lstm_hidden_dim", 128),
             num_layers=train_arg.get("lstm_num_layers", 2),
             loss_fn=nn.CrossEntropyLoss(),
         )
-    elif train_arg.get("conv1d", False):
+    elif train_arg.get("type_model") == "conv1d_blstm":
         logger.debug("Adding Conv1D and BLSTM layer")
+        model = TransformerConv1D(
+            transformer_model=model,
+            conv_out_channels=train_arg.get("conv_out_channels", 256),
+            conv_kernel_size=train_arg.get("conv_kernel_size", 3),
+            hidden_dim=train_arg.get("hidden_dim", 128),
+            output_dim=len(id2label),
+        )
+    elif train_arg.get("type_model") == "conv1d":
+        logger.debug("Adding Conv1D layer")
         model = TransformerConv1D(
             transformer_model=model,
             conv_out_channels=train_arg.get("conv_out_channels", 256),
@@ -331,6 +323,22 @@ def load_model(
         model = config_device(model)
 
     return model, tokenizer
+
+
+def load_tokenizer(base_model, max_length=128):
+    """
+    Loads tokenizer
+    """
+    logger.debug(f"Loading tokenizer {base_model}")
+
+    tokenizer = AutoTokenizer.from_pretrained(base_model)
+    tokenizer.model_max_length = max_length
+
+    special_tokens = list(preprocessing_args.values())
+
+    tokenizer.add_tokens(special_tokens)
+
+    return tokenizer
 
 
 def load_dataset(
