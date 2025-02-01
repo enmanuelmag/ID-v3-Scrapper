@@ -20,6 +20,7 @@ from transformers import (
 logging.getLogger("mlflow.models.model").setLevel(logging.ERROR)
 
 logging.basicConfig()
+
 logger = logging.getLogger("Utils")
 logger.setLevel(logging.INFO)
 
@@ -32,8 +33,8 @@ id2label = {0: "NEG", 1: "NEU", 2: "POS"}
 label2id = {v: k for k, v in id2label.items()}
 
 preprocessing_args = {
-    "user_token": "@usuario",
     "url_token": "url",
+    "user_token": "@usuario",
     "hashtag_token": "hashtag",
 }
 
