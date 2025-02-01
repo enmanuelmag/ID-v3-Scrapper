@@ -8,4 +8,5 @@ __pycache__
 
 artifacts/
 model/results/
+model/mlruns/
 tweets_parsed_pruned_dataset/
