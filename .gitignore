@@ -5,3 +5,7 @@ __pycache__
 *.error
 
 .DS_Store
+
+artifacts/
+model/results/
+tweets_parsed_pruned_dataset/
